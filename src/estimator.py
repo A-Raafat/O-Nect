@@ -2,8 +2,6 @@ import itertools
 import logging
 import math
 from collections import namedtuple
-import requests
-
 import cv2
 import numpy as np
 import tensorflow as tf
@@ -12,8 +10,6 @@ from scipy.ndimage import maximum_filter, gaussian_filter
 import common
 from common import CocoPairsNetwork, CocoPairs, CocoPart
 
-import socket
-import json
 
 logger = logging.getLogger('TfPoseEstimator')
 logger.setLevel(logging.INFO)
@@ -23,12 +19,13 @@ ch.setFormatter(formatter)
 logger.addHandler(ch)
 
 
+'''
 host = "127.0.0.1"
 port = 1234
 buffer_size = 1024
 my_socket = socket.socket()
 my_socket.connect((host,port))
-
+'''
 class Human:
     """
     body_parts: list of BodyPart
@@ -39,6 +36,8 @@ class Human:
         self.pairs = []
         self.uidx_list = set()
         self.body_parts = {}
+        
+        
         for pair in pairs:
             self.add_pair(pair)
 
@@ -105,6 +104,8 @@ class PoseEstimator:
     PAF_Count_Threshold = 5
     Part_Count_Threshold = 4
     Part_Score_Threshold = 4.5
+           
+    
 
     PartPair = namedtuple('PartPair', [
         'score',
@@ -115,6 +116,8 @@ class PoseEstimator:
     ], verbose=False)
 
     def __init__(self):
+        
+
         pass
 
     @staticmethod
@@ -124,7 +127,7 @@ class PoseEstimator:
         return plain * (plain == maximum_filter(plain, footprint=np.ones((window_size, window_size))))
 
     @staticmethod
-    def estimate(heat_mat, paf_mat):
+    def estimate(heat_mat, paf_mat, img_shape_x, img_shape_y):
         if heat_mat.shape[2] == 19:
             heat_mat = np.rollaxis(heat_mat, 2, 0)
         if paf_mat.shape[2] == 38:
@@ -165,6 +168,7 @@ class PoseEstimator:
         # merge pairs to human
         #humans is the actual array where i store the x,y co-ords and the confidence score
         # pairs_by_conn is sorted by CocoPairs(part importance) and Score between Parts.
+
         humans = [Human([pair]) for pair in pairs_by_conn]
         while True:
             merge_items = None
@@ -190,15 +194,24 @@ class PoseEstimator:
         #later for list of body parts for a given human,iterate theough the bodyparts
         #return the co-ordinates x,y for each body part of the iteration
         #i'm  able to retrieve the co-ordinates but not able to send them.
-
+        flag=0
         for human in humans:
+            #my_socket.send('start'.encode())
+            flag=1
+            p1_id=[]
+            p2_id=[]
+    
+            x1=[]
+            x2=[]
+            y1=[]
+            y2=[]
             for body_part in human.pairs:
-                p1_id =body_part.part_idx1
-                x1_coord=body_part.coord1[0]
-                y1_coord=body_part.coord1[1]
-                p2_id =body_part.part_idx2
-                x2_coord=body_part.coord2[0]
-                y2_coord=body_part.coord2[1]
+                p1_id.append(body_part.part_idx1)
+                x1.append(int(body_part.coord1[0]*img_shape_x))
+                y1.append(int(body_part.coord1[1]*img_shape_y))
+                p2_id.append(body_part.part_idx2)
+                x2.append(int(body_part.coord2[0]*img_shape_x))
+                y2.append(int(body_part.coord2[1]*img_shape_y))
                 #print(type(test))
                 #print(body_part.coord1[1])
                 #body_part.coord1[0]
@@ -206,18 +219,30 @@ class PoseEstimator:
                 #begin get method for co-ords
                 #URL="http://localhost:5000/store?p1_id"+str(p1_id)+"&x1_coord="+str(x1_coord)+"&y1_coord="+str(y1_coord)+"&p2_id"+str(p2_id)+"&x2_coord"+str(x2_coord)+"&y2_coord"+str(y2_coord)
                 #print(URL)
+                '''
                 params={'p1_id':p1_id,'x1_coord':x1_coord,'y1_coord':y1_coord,'p2_id':p2_id,'x2_coord':x2_coord,'y2_coord':y2_coord}
                 params = json.dumps(params)
                 my_socket.send(params.encode())
                 ret = my_socket.recv(buffer_size).decode()
-
+                '''
                 #requests.get(url=URL,params=params)
                 #print("2nd point x and y")
                 #print(body_part.coord2[0])
                 #print(body_part.coord2[1])
           #      print(body_part.x)
            #     print(body_part.y)
-        return humans
+            #my_socket.send(''.encode())
+        if flag==0:
+            return humans, [-500, -500] ,[-500, -500],[-500, -500],[-500, -500],[-500, -500],[-500, -500]
+        p1_id=np.array(p1_id)
+        p2_id=np.array(p2_id)
+            
+        x1=np.array(x1)
+        x2=np.array(x2)
+        y1=np.array(y1)
+        y2=np.array(y2)
+        return humans, p1_id, p2_id, x1, x2, y1, y2
+         
 
     @staticmethod
     def score_pairs(part_idx1, part_idx2, coord_list1, coord_list2, paf_mat_x, paf_mat_y, heatmap, rescale=(1.0, 1.0)):
@@ -422,7 +447,7 @@ class TfPoseEstimator:
         else:
             return cropped
 
-    def inference(self, npimg, scales=None):
+    def inference(self, npimg, image_shape_x, image_shape_y, scales=None):
         if npimg is None:
             raise Exception('The image is not valid. Please check your image exists.')
 
@@ -486,5 +511,5 @@ class TfPoseEstimator:
             self.heatMat = resized_heatMat
             self.pafMat = resized_pafMat / (np.log(resized_cntMat) + 1)
 
-        humans = PoseEstimator.estimate(self.heatMat, self.pafMat)
-        return humans
+        humans, p1_id, p2_id, x1,x2,y1,y2 = PoseEstimator.estimate(self.heatMat, self.pafMat, image_shape_x, image_shape_y)
+        return humans, p1_id, p2_id, x1, x2, y1, y2
